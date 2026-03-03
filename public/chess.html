@@ -952,9 +952,9 @@
           </div>
           <div class="srow">
             <span class="slbl">Think time</span>
-            <input type="range" id="ttime" min="500" max="30000" value="5000" step="500"
+            <input type="range" id="ttime" min="500" max="30000" value="10000" step="500"
               oninput="document.getElementById('tt-lbl').textContent=this.value+'ms'">
-            <span class="sv" id="tt-lbl">3000ms</span>
+            <span class="sv" id="tt-lbl">10000ms</span>
           </div>
         </div>
       </div>
@@ -1256,8 +1256,9 @@
         // Performance & behaviour options
         w.postMessage('setoption name Hash value 256');
         w.postMessage('setoption name MultiPV value 1');
-        w.postMessage('setoption name Move Overhead value 30');
-        w.postMessage('setoption name Contempt value 24');
+        w.postMessage('setoption name Move Overhead value 0');
+        w.postMessage('setoption name Contempt value 50');
+        w.postMessage('setoption name Ponder value false');
         // Apply skill setting properly on init
         const skillVal = parseInt(document.getElementById('skill').value);
         if (skillVal >= 20) {
@@ -1287,29 +1288,31 @@
     function askEng() {
       if (sfBuiltin || !sfReady || !sf) { doBuiltin(); return; }
       setEng('on', '⚡ Thinking…'); // visual feedback while engine searches
-      const t = parseInt(document.getElementById('ttime').value) || 5000;
+      const tBase = parseInt(document.getElementById('ttime').value) || 10000;
       const sk = parseInt(document.getElementById('skill').value);
+      // Scale think time by skill: lower skills respond faster, max skill gets full time
+      const t = sk >= 20 ? tBase : sk >= 11 ? Math.round(tBase * 0.6) : Math.round(tBase * 0.3);
       // Build UCI move list from full game history so Stockfish can detect 3-fold repetition
       const uciMoves = hist.map(h => {
         const m = h.mv;
         return chess.i2a(m.from) + chess.i2a(m.to) + (m.pp ? m.pp[1].toLowerCase() : '');
       }).join(' ');
       sf.postMessage(uciMoves ? 'position startpos moves ' + uciMoves : 'position startpos');
-      // Cap depth at max skill to prevent freezing on level 20
-      sf.postMessage(sk >= 20 ? 'go movetime ' + t + ' depth 28' : 'go movetime ' + t);
+      // No depth cap — let Stockfish search as deep as it can within the time limit
+      sf.postMessage('go movetime ' + t);
     }
     function setSkill(v) {
       v = parseInt(v);
       // Map skill level to approximate ELO for display
-      // SF18 lite-single peaks ~3200 in-browser (single thread, lite net, time limited)
+      // SF18 WASM single-thread: uncapped depth + 10s think time peaks ~2900-3000
       const eloMap = {
-        1: '~600', 2: '~700', 3: '~800', 4: '~900', 5: '~1000',
-        6: '~1100', 7: '~1200', 8: '~1350', 9: '~1500', 10: '~1650',
-        11: '~1800', 12: '~1950', 13: '~2100', 14: '~2250', 15: '~2400',
-        16: '~2550', 17: '~2700', 18: '~2850', 19: '~2950', 20: '~3200'
+        1: '~500', 2: '~600', 3: '~700', 4: '~800', 5: '~950',
+        6: '~1050', 7: '~1150', 8: '~1300', 9: '~1450', 10: '~1600',
+        11: '~1750', 12: '~1900', 13: '~2050', 14: '~2200', 15: '~2350',
+        16: '~2500', 17: '~2600', 18: '~2700', 19: '~2800', 20: '~3000'
       };
       document.getElementById('sk-lbl').textContent = 'Level ' + v + ' / 20';
-      document.getElementById('top-rat').textContent = eloMap[v] || '~3200';
+      document.getElementById('top-rat').textContent = eloMap[v] || '~3000';
 
       if (sf && sfReady && !sfBuiltin) {
         if (v >= 20) {
@@ -2155,7 +2158,7 @@ self.onmessage = function(e) {
       document.getElementById('btn-ai').classList.toggle('active', m === 'ai');
       document.getElementById('btn-2p').classList.toggle('active', m === '2p');
       document.getElementById('top-name').textContent = m === 'ai' ? 'Stockfish 18' : 'Player 2';
-      const curElo = m === 'ai' ? (document.getElementById('top-rat').textContent || '~3200') : 'Human';
+      const curElo = m === 'ai' ? (document.getElementById('top-rat').textContent || '~3000') : 'Human';
       document.getElementById('top-rat').textContent = curElo;
       newGame();
     }
@@ -2173,10 +2176,23 @@ self.onmessage = function(e) {
       if (sf && sfReady && !sfBuiltin) {
         sf.postMessage('ucinewgame');
         sf.postMessage('setoption name Hash value 256');
-        sf.postMessage('setoption name Contempt value 24');
+        sf.postMessage('setoption name Contempt value 50');
+        sf.postMessage('setoption name Move Overhead value 0');
+        sf.postMessage('setoption name Ponder value false');
+        // Re-apply current skill setting after ucinewgame
+        const curSkill = parseInt(document.getElementById('skill').value);
+        if (curSkill >= 20) {
+          sf.postMessage('setoption name UCI_LimitStrength value false');
+          sf.postMessage('setoption name Skill Level value 20');
+        } else {
+          sf.postMessage('setoption name UCI_LimitStrength value true');
+          sf.postMessage('setoption name Skill Level value ' + curSkill);
+        }
+        // Sync: wait for engine to be ready before allowing moves
+        sf.postMessage('isready');
       }
       updBars(); buildSquares(); buildPieces(); renderHL(); renderDots(); updStatus();
-      if (mode === 'ai' && pColor === 'b') setTimeout(() => askEng(), 600);
+      if (mode === 'ai' && pColor === 'b') setTimeout(() => askEng(), 800);
     }
 
     function doUndo() {
