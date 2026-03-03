@@ -888,7 +888,7 @@
     <div class="lcol">
       <div class="pbar" id="top-bar">
         <div class="pav" id="top-av"></div>
-        <div><span class="pname" id="top-name">Stockfish 18</span><span class="prat" id="top-rat">~3200</span></div>
+        <div><span class="pname" id="top-name">Stockfish 18</span><span class="prat" id="top-rat">~3200+</span></div>
         <div class="pcaps" id="top-caps"></div>
       </div>
 
@@ -946,15 +946,15 @@
             </select>
           </div>
           <div class="srow">
-            <span class="slbl">Difficulty</span>
-            <input type="range" id="skill" min="1" max="20" value="20" oninput="setSkill(this.value)">
-            <span class="sv" id="sk-lbl">Level 20 / 20</span>
+            <span class="slbl">Difficulty (ELO)</span>
+            <input type="range" id="skill" min="250" max="3200" value="3200" step="50" oninput="setSkill(this.value)">
+            <span class="sv" id="sk-lbl">MAX</span>
           </div>
           <div class="srow">
             <span class="slbl">Think time</span>
-            <input type="range" id="ttime" min="500" max="30000" value="5000" step="500"
-              oninput="document.getElementById('tt-lbl').textContent=this.value+'ms'">
-            <span class="sv" id="tt-lbl">3000ms</span>
+            <input type="range" id="ttime" min="500" max="60000" value="5000" step="500"
+              oninput="document.getElementById('tt-lbl').textContent=(this.value/1000).toFixed(1)+'s'">
+            <span class="sv" id="tt-lbl">5.0s</span>
           </div>
         </div>
       </div>
@@ -1253,19 +1253,23 @@
       if (m === 'readyok') {
         sfReady = true;
         setEng('on', '⚡ Stockfish 18');
-        // Performance & behaviour options
-        w.postMessage('setoption name Hash value 256');
+        // Performance & behaviour options — maximize engine strength
+        w.postMessage('setoption name Hash value 512');
         w.postMessage('setoption name MultiPV value 1');
-        w.postMessage('setoption name Move Overhead value 30');
+        w.postMessage('setoption name Move Overhead value 10');
         w.postMessage('setoption name Contempt value 24');
-        // Apply skill setting properly on init
-        const skillVal = parseInt(document.getElementById('skill').value);
-        if (skillVal >= 20) {
+        w.postMessage('setoption name Threads value 1');
+        // Apply ELO skill setting properly on init
+        const eloVal = parseInt(document.getElementById('skill').value);
+        if (eloVal >= 3200) {
           w.postMessage('setoption name UCI_LimitStrength value false');
           w.postMessage('setoption name Skill Level value 20');
         } else {
           w.postMessage('setoption name UCI_LimitStrength value true');
-          w.postMessage('setoption name Skill Level value ' + skillVal);
+          w.postMessage('setoption name UCI_Elo value ' + eloVal);
+          // Also map ELO to skill level for engines that use it
+          const skillLvl = Math.max(0, Math.min(20, Math.round((eloVal - 250) / 147.5)));
+          w.postMessage('setoption name Skill Level value ' + skillLvl);
         }
         return;
       }
@@ -1288,38 +1292,47 @@
       if (sfBuiltin || !sfReady || !sf) { doBuiltin(); return; }
       setEng('on', '⚡ Thinking…'); // visual feedback while engine searches
       const t = parseInt(document.getElementById('ttime').value) || 5000;
-      const sk = parseInt(document.getElementById('skill').value);
+      const elo = parseInt(document.getElementById('skill').value);
       // Build UCI move list from full game history so Stockfish can detect 3-fold repetition
       const uciMoves = hist.map(h => {
         const m = h.mv;
         return chess.i2a(m.from) + chess.i2a(m.to) + (m.pp ? m.pp[1].toLowerCase() : '');
       }).join(' ');
       sf.postMessage(uciMoves ? 'position startpos moves ' + uciMoves : 'position startpos');
-      // Cap depth at max skill to prevent freezing on level 20
-      sf.postMessage(sk >= 20 ? 'go movetime ' + t + ' depth 28' : 'go movetime ' + t);
+      // At MAX (3200) give engine full depth; at lower ELO, scale depth down
+      if (elo >= 3200) {
+        sf.postMessage('go movetime ' + t + ' depth 40');
+      } else if (elo >= 2500) {
+        sf.postMessage('go movetime ' + t + ' depth 30');
+      } else if (elo >= 1800) {
+        sf.postMessage('go movetime ' + t + ' depth 22');
+      } else {
+        sf.postMessage('go movetime ' + t);
+      }
     }
     function setSkill(v) {
       v = parseInt(v);
-      // Map skill level to approximate ELO for display
-      // SF18 lite-single peaks ~3200 in-browser (single thread, lite net, time limited)
-      const eloMap = {
-        1: '~600', 2: '~700', 3: '~800', 4: '~900', 5: '~1000',
-        6: '~1100', 7: '~1200', 8: '~1350', 9: '~1500', 10: '~1650',
-        11: '~1800', 12: '~1950', 13: '~2100', 14: '~2250', 15: '~2400',
-        16: '~2550', 17: '~2700', 18: '~2850', 19: '~2950', 20: '~3200'
-      };
-      document.getElementById('sk-lbl').textContent = 'Level ' + v + ' / 20';
-      document.getElementById('top-rat').textContent = eloMap[v] || '~3200';
+      // Display ELO or MAX
+      if (v >= 3200) {
+        document.getElementById('sk-lbl').textContent = 'MAX';
+        document.getElementById('top-rat').textContent = '~3200+';
+      } else {
+        document.getElementById('sk-lbl').textContent = v + ' ELO';
+        document.getElementById('top-rat').textContent = '~' + v;
+      }
 
       if (sf && sfReady && !sfBuiltin) {
-        if (v >= 20) {
+        if (v >= 3200) {
           // Full strength: disable skill limiting entirely
           sf.postMessage('setoption name UCI_LimitStrength value false');
           sf.postMessage('setoption name Skill Level value 20');
         } else {
-          // Limited strength
+          // Limited strength via UCI_Elo
           sf.postMessage('setoption name UCI_LimitStrength value true');
-          sf.postMessage('setoption name Skill Level value ' + v);
+          sf.postMessage('setoption name UCI_Elo value ' + v);
+          // Also map ELO to skill level 0-20 for engines that use Skill Level
+          const skillLvl = Math.max(0, Math.min(20, Math.round((v - 250) / 147.5)));
+          sf.postMessage('setoption name Skill Level value ' + skillLvl);
         }
       }
     }
@@ -1333,7 +1346,15 @@
     const PV = { P: 100, N: 320, B: 330, R: 500, Q: 900, K: 20000 };
     const PST = { P: [0, 0, 0, 0, 0, 0, 0, 0, 50, 50, 50, 50, 50, 50, 50, 50, 10, 10, 20, 30, 30, 20, 10, 10, 5, 5, 10, 25, 25, 10, 5, 5, 0, 0, 0, 20, 20, 0, 0, 0, 5, -5, -10, 0, 0, -10, -5, 5, 5, 10, 10, -20, -20, 10, 10, 5, 0, 0, 0, 0, 0, 0, 0, 0], N: [-50, -40, -30, -30, -30, -30, -40, -50, -40, -20, 0, 0, 0, 0, -20, -40, -30, 0, 10, 15, 15, 10, 0, -30, -30, 5, 15, 20, 20, 15, 5, -30, -30, 0, 15, 20, 20, 15, 0, -30, -30, 5, 10, 15, 15, 10, 5, -30, -40, -20, 0, 5, 5, 0, -20, -40, -50, -40, -30, -30, -30, -30, -40, -50], B: [-20, -10, -10, -10, -10, -10, -10, -20, -10, 0, 0, 0, 0, 0, 0, -10, -10, 0, 5, 10, 10, 5, 0, -10, -10, 5, 5, 10, 10, 5, 5, -10, -10, 0, 10, 10, 10, 10, 0, -10, -10, 10, 10, 10, 10, 10, 10, -10, -10, 5, 0, 0, 0, 0, 5, -10, -20, -10, -10, -10, -10, -10, -10, -20], R: [0, 0, 0, 0, 0, 0, 0, 0, 5, 10, 10, 10, 10, 10, 10, 5, -5, 0, 0, 0, 0, 0, 0, -5, -5, 0, 0, 0, 0, 0, 0, -5, -5, 0, 0, 0, 0, 0, 0, -5, -5, 0, 0, 0, 0, 0, 0, -5, -5, 0, 0, 0, 0, 0, 0, -5, 0, 0, 0, 5, 5, 0, 0, 0], Q: [-20, -10, -10, -5, -5, -10, -10, -20, -10, 0, 0, 0, 0, 0, 0, -10, -10, 0, 5, 5, 5, 5, 0, -10, -5, 0, 5, 5, 5, 5, 0, -5, 0, 0, 5, 5, 5, 5, 0, -5, -10, 5, 5, 5, 5, 5, 0, -10, -10, 0, 5, 0, 0, 0, 0, -10, -20, -10, -10, -5, -5, -10, -10, -20], K: [-30, -40, -40, -50, -50, -40, -40, -30, -30, -40, -40, -50, -50, -40, -40, -30, -30, -40, -40, -50, -50, -40, -40, -30, -30, -40, -40, -50, -50, -40, -40, -30, -20, -30, -30, -40, -40, -30, -30, -20, -10, -20, -20, -20, -20, -20, -20, -10, 20, 20, 0, 0, 0, 0, 20, 20, 20, 30, 10, 0, 0, 10, 30, 20] };
     // evb kept on main thread for the hint button (lightweight single-ply eval)
-    function evb(ch) { let s = 0; for (let i = 0; i < 64; i++) { const p = ch.b[i]; if (!p) continue; const pi = p[0] === 'w' ? i : 63 - i; s += ((PV[p[1]] || 0) + (PST[p[1]] ? PST[p[1]][pi] : 0)) * (p[0] === 'w' ? 1 : -1); } return s; }
+    function evb(ch) {
+      let s = 0;
+      for (let i = 0; i < 64; i++) {
+        const p = ch.b[i]; if (!p) continue;
+        const pi = p[0] === 'w' ? i : 63 - i;
+        s += ((PV[p[1]] || 0) + (PST[p[1]] ? PST[p[1]][pi] : 0)) * (p[0] === 'w' ? 1 : -1);
+      }
+      return s;
+    }
 
     // ── Minimax Web Worker (off main thread) ──
     const minimaxWorkerSrc = `
@@ -1471,13 +1492,128 @@ class Chess {
 
 const PV = { P: 100, N: 320, B: 330, R: 500, Q: 900, K: 20000 };
 const PST = { P: [0,0,0,0,0,0,0,0,50,50,50,50,50,50,50,50,10,10,20,30,30,20,10,10,5,5,10,25,25,10,5,5,0,0,0,20,20,0,0,0,5,-5,-10,0,0,-10,-5,5,5,10,10,-20,-20,10,10,5,0,0,0,0,0,0,0,0], N: [-50,-40,-30,-30,-30,-30,-40,-50,-40,-20,0,0,0,0,-20,-40,-30,0,10,15,15,10,0,-30,-30,5,15,20,20,15,5,-30,-30,0,15,20,20,15,0,-30,-30,5,10,15,15,10,5,-30,-40,-20,0,5,5,0,-20,-40,-50,-40,-30,-30,-30,-30,-40,-50], B: [-20,-10,-10,-10,-10,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,10,10,5,0,-10,-10,5,5,10,10,5,5,-10,-10,0,10,10,10,10,0,-10,-10,10,10,10,10,10,10,-10,-10,5,0,0,0,0,5,-10,-20,-10,-10,-10,-10,-10,-10,-20], R: [0,0,0,0,0,0,0,0,5,10,10,10,10,10,10,5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,-5,0,0,0,0,0,0,-5,0,0,0,5,5,0,0,0], Q: [-20,-10,-10,-5,-5,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,5,5,5,0,-10,-5,0,5,5,5,5,0,-5,0,0,5,5,5,5,0,-5,-10,5,5,5,5,5,0,-10,-10,0,5,0,0,0,0,-10,-20,-10,-10,-5,-5,-10,-10,-20], K: [-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-30,-40,-40,-50,-50,-40,-40,-30,-20,-30,-30,-40,-40,-30,-30,-20,-10,-20,-20,-20,-20,-20,-20,-10,20,20,0,0,0,0,20,20,20,30,10,0,0,10,30,20] };
+const KE = [
+  -50,-40,-30,-20,-20,-30,-40,-50,
+  -30,-20,-10,  0,  0,-10,-20,-30,
+  -30,-10, 20, 30, 30, 20,-10,-30,
+  -30,-10, 30, 40, 40, 30,-10,-30,
+  -30,-10, 30, 40, 40, 30,-10,-30,
+  -30,-10, 20, 30, 30, 20,-10,-30,
+  -30,-30,  0,  0,  0,  0,-30,-30,
+  -50,-30,-30,-30,-30,-30,-30,-50
+];
 
-function evb(ch) { let s = 0; for (let i = 0; i < 64; i++) { const p = ch.b[i]; if (!p) continue; const pi = p[0] === 'w' ? i : 63 - i; s += ((PV[p[1]] || 0) + (PST[p[1]] ? PST[p[1]][pi] : 0)) * (p[0] === 'w' ? 1 : -1); } return s; }
+function isEndgame(ch) {
+  let wq = 0, bq = 0, wMinor = 0, bMinor = 0;
+  for (let i = 0; i < 64; i++) {
+    const p = ch.b[i]; if (!p) continue;
+    if (p === 'wQ') wq++; else if (p === 'bQ') bq++;
+    if (p[0] === 'w' && (p[1] === 'N' || p[1] === 'B' || p[1] === 'R')) wMinor++;
+    if (p[0] === 'b' && (p[1] === 'N' || p[1] === 'B' || p[1] === 'R')) bMinor++;
+  }
+  return (wq === 0 && bq === 0) || (wq <= 1 && bq <= 1 && wMinor <= 1 && bMinor <= 1);
+}
+
+function evb(ch) {
+  let s = 0;
+  let wBishops = 0, bBishops = 0;
+  const eg = isEndgame(ch);
+  for (let i = 0; i < 64; i++) {
+    const p = ch.b[i]; if (!p) continue;
+    const co = p[0], ty = p[1];
+    const pi = co === 'w' ? i : 63 - i;
+    let val = (PV[ty] || 0) + (PST[ty] ? PST[ty][pi] : 0);
+    // Endgame king table
+    if (ty === 'K' && eg) val = 20000 + KE[pi];
+    // Passed pawn bonus
+    if (ty === 'P') {
+      const r = Math.floor(i / 8), c = i % 8;
+      let passed = true;
+      if (co === 'w') {
+        for (let rr = r - 1; rr >= 0; rr--) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const cc = c + dc;
+            if (cc >= 0 && cc < 8 && ch.b[rr * 8 + cc] === 'bP') { passed = false; break; }
+          }
+          if (!passed) break;
+        }
+        if (passed) val += (6 - r) * 15;
+      } else {
+        for (let rr = r + 1; rr < 8; rr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const cc = c + dc;
+            if (cc >= 0 && cc < 8 && ch.b[rr * 8 + cc] === 'wP') { passed = false; break; }
+          }
+          if (!passed) break;
+        }
+        if (passed) val += (r - 1) * 15;
+      }
+    }
+    if (ty === 'B') { if (co === 'w') wBishops++; else bBishops++; }
+    s += val * (co === 'w' ? 1 : -1);
+  }
+  // Bishop pair bonus
+  if (wBishops >= 2) s += 35;
+  if (bBishops >= 2) s -= 35;
+  return s;
+}
+
+// Quiescence search to avoid horizon effect
+function quiesce(ch, a, b, mx) {
+  const standPat = evb(ch);
+  if (mx) {
+    if (standPat >= b) return b;
+    if (standPat > a) a = standPat;
+  } else {
+    if (standPat <= a) return a;
+    if (standPat < b) b = standPat;
+  }
+  const mvs = ch.legal().filter(m => !!ch.b[m.to] || m.sp === 'enpassant' || m.pp);
+  mvs.sort((x, y) => (ch.b[y.to] ? PV[ch.b[y.to][1]] || 0 : 0) - (ch.b[x.to] ? PV[ch.b[x.to][1]] || 0 : 0));
+  for (const m of mvs) {
+    const u = ch.apply(m);
+    const v = quiesce(ch, a, b, !mx);
+    ch.undo(u);
+    if (mx) { if (v > a) a = v; if (a >= b) return b; }
+    else { if (v < b) b = v; if (b <= a) return a; }
+  }
+  return mx ? a : b;
+}
+
 function minimax(ch, d, a, b, mx) {
-  const ov = ch.over(); if (ov === 'mate') return mx ? -100000 : 100000; if (ov === 'stale' || ov === '50') return 0; if (d === 0) return evb(ch);
-  const mvs = ch.legal().sort((x, y) => (ch.b[y.to] ? PV[ch.b[y.to][1]] || 0 : 0) - (ch.b[x.to] ? PV[ch.b[x.to][1]] || 0 : 0));
-  if (mx) { let best = -Infinity; for (const m of mvs) { const u = ch.apply(m); best = Math.max(best, minimax(ch, d - 1, a, b, false)); ch.undo(u); a = Math.max(a, best); if (b <= a) break; } return best; }
-  else { let best = Infinity; for (const m of mvs) { const u = ch.apply(m); best = Math.min(best, minimax(ch, d - 1, a, b, true)); ch.undo(u); b = Math.min(b, best); if (b <= a) break; } return best; }
+  const ov = ch.over();
+  if (ov === 'mate') return mx ? -100000 + (10 - d) : 100000 - (10 - d);
+  if (ov === 'stale' || ov === '50') return 0;
+  if (d === 0) return quiesce(ch, a, b, mx);
+  const mvs = ch.legal();
+  // Move ordering: captures by MVV-LVA, then checks, then others
+  mvs.sort((x, y) => {
+    const xCap = ch.b[x.to] ? PV[ch.b[x.to][1]] || 0 : 0;
+    const yCap = ch.b[y.to] ? PV[ch.b[y.to][1]] || 0 : 0;
+    if (xCap !== yCap) return yCap - xCap;
+    return (y.pp ? 800 : 0) - (x.pp ? 800 : 0);
+  });
+  if (mx) {
+    let best = -Infinity;
+    for (const m of mvs) {
+      const u = ch.apply(m);
+      best = Math.max(best, minimax(ch, d - 1, a, b, false));
+      ch.undo(u);
+      a = Math.max(a, best);
+      if (b <= a) break;
+    }
+    return best;
+  } else {
+    let best = Infinity;
+    for (const m of mvs) {
+      const u = ch.apply(m);
+      best = Math.min(best, minimax(ch, d - 1, a, b, true));
+      ch.undo(u);
+      b = Math.min(b, best);
+      if (b <= a) break;
+    }
+    return best;
+  }
 }
 
 const posHistory = [];
@@ -1488,8 +1624,10 @@ self.onmessage = function(e) {
 
   const ch = new Chess();
   ch.loadFEN(fen);
-  const d = Math.max(1, Math.min(5, Math.ceil(skill / 4)));
-  const noise = Math.max(0, (10 - skill) * 30);
+  // Map ELO to search depth: 250 ELO => depth 1, MAX => depth 7
+  const d = Math.max(1, Math.min(7, Math.round((skill - 250) / 500) + 1));
+  // Map ELO to noise: lower ELO => more random mistakes
+  const noise = skill >= 3200 ? 0 : Math.max(0, Math.round((3200 - skill) * 0.12));
   const mvs = ch.legal();
   if (!mvs.length) { self.postMessage({ uci: null }); return; }
   const mx = ch.t === 'w';
@@ -1534,10 +1672,10 @@ self.onmessage = function(e) {
     function doBuiltin() {
       if (isOver) return;
       setEng('warn', 'Thinking...');
-      const sk = parseInt(document.getElementById('skill').value);
+      const elo = parseInt(document.getElementById('skill').value);
       const fen = chess.fen();
       const worker = getMinimaxWorker();
-      worker.postMessage({ fen, skill: sk, posHist: posHistory });
+      worker.postMessage({ fen, skill: elo, posHist: posHistory });
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -2155,7 +2293,7 @@ self.onmessage = function(e) {
       document.getElementById('btn-ai').classList.toggle('active', m === 'ai');
       document.getElementById('btn-2p').classList.toggle('active', m === '2p');
       document.getElementById('top-name').textContent = m === 'ai' ? 'Stockfish 18' : 'Player 2';
-      const curElo = m === 'ai' ? (document.getElementById('top-rat').textContent || '~3200') : 'Human';
+      const curElo = m === 'ai' ? (document.getElementById('top-rat').textContent || '~3200+') : 'Human';
       document.getElementById('top-rat').textContent = curElo;
       newGame();
     }
@@ -2172,8 +2310,19 @@ self.onmessage = function(e) {
       setEval(0, false); document.getElementById('edp').textContent = 'd—';
       if (sf && sfReady && !sfBuiltin) {
         sf.postMessage('ucinewgame');
-        sf.postMessage('setoption name Hash value 256');
+        sf.postMessage('setoption name Hash value 512');
         sf.postMessage('setoption name Contempt value 24');
+        // Re-apply ELO setting on new game
+        const elo = parseInt(document.getElementById('skill').value);
+        if (elo >= 3200) {
+          sf.postMessage('setoption name UCI_LimitStrength value false');
+          sf.postMessage('setoption name Skill Level value 20');
+        } else {
+          sf.postMessage('setoption name UCI_LimitStrength value true');
+          sf.postMessage('setoption name UCI_Elo value ' + elo);
+          const skillLvl = Math.max(0, Math.min(20, Math.round((elo - 250) / 147.5)));
+          sf.postMessage('setoption name Skill Level value ' + skillLvl);
+        }
       }
       updBars(); buildSquares(); buildPieces(); renderHL(); renderDots(); updStatus();
       if (mode === 'ai' && pColor === 'b') setTimeout(() => askEng(), 600);
