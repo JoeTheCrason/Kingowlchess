@@ -1248,6 +1248,7 @@
     }
 
     function sfMsg(m, w) {
+      console.log("[v0] sfMsg:", m ? m.substring(0, 100) : m);
       if (typeof m !== 'string' || !m) return;
       if (m === 'uciok') { w.postMessage('isready'); return; }
       if (m === 'readyok') {
@@ -1289,7 +1290,8 @@
     function builtinMode() { sfBuiltin = true; sfReady = true; setEng('warn', 'Built-in engine'); }
     function setEng(cls, txt) { document.getElementById('eng-dot').className = 'dot' + (cls ? ' ' + cls : ''); document.getElementById('eng-txt').textContent = txt; }
     function askEng() {
-      if (sfBuiltin || !sfReady || !sf) { doBuiltin(); return; }
+      console.log("[v0] askEng called - sfBuiltin:", sfBuiltin, "sfReady:", sfReady, "sf:", !!sf);
+      if (sfBuiltin || !sfReady || !sf) { console.log("[v0] using builtin engine"); doBuiltin(); return; }
       setEng('on', '⚡ Thinking…'); // visual feedback while engine searches
       const t = parseInt(document.getElementById('ttime').value) || 5000;
       const elo = parseInt(document.getElementById('skill').value);
@@ -1656,6 +1658,7 @@ self.onmessage = function(e) {
         const blob = new Blob([minimaxWorkerSrc], { type: 'application/javascript' });
         minimaxWorker = new Worker(URL.createObjectURL(blob));
         minimaxWorker.onmessage = function(e) {
+          console.log("[v0] minimax worker response:", JSON.stringify(e.data));
           const { uci, evalScore, curFen } = e.data;
           setEng('warn', 'Built-in engine');
           if (uci) {
@@ -1671,6 +1674,7 @@ self.onmessage = function(e) {
     // Position history for repetition avoidance in fallback engine
     const posHistory = [];
     function doBuiltin() {
+      console.log("[v0] doBuiltin called - isOver:", isOver);
       if (isOver) return;
       setEng('warn', 'Thinking...');
       const elo = parseInt(document.getElementById('skill').value);
